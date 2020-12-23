@@ -229,7 +229,7 @@ func main() {
 					case "AllocatedResources":
 						params["resources"] = "true"
 					case "TaskStates":
-						params["resources"] = "true"
+						params["task_states"] = "true"
 					}
 				}
 
