@@ -36,7 +36,7 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 		return existType
 	}
 
-	allocFields := graphql.Fields{}
+	fields := graphql.Fields{}
 
 	for i := 0; i < objectType.NumField(); i++ {
 		currentField := objectType.Field(i)
@@ -44,6 +44,13 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 		// map
 		if currentField.Type.Kind() == reflect.Map {
 			valType := currentField.Type.Elem()
+
+			// TODO: fix this
+			// skip Config map[string]interface{}
+			if valType.String() == "interface {}" {
+				continue
+			}
+
 			var valGraphql graphql.Output
 
 			gt, ok := typeMap[valType.Kind()]
@@ -54,12 +61,21 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 					valType = valType.Elem()
 				}
 
-				valGraphql = reflectTransform(valType, registry) // of structs
+				// TODO: extract helper
+				// Header map[string][]string
+				if valType.Kind() == reflect.Slice {
+					gt, ok := typeMap[valType.Elem().Kind()]
+					if ok {
+						valGraphql = graphql.NewList(graphql.NewNonNull(gt))
+					}
+				} else {
+					valGraphql = reflectTransform(valType, registry) // of structs
+				}
 			}
 
 			itemType := graphql.NewObject(
 				graphql.ObjectConfig{
-					Name: currentField.Name + "MapItem",
+					Name: objectType.Name() + currentField.Name + "MapItem",
 					Fields: graphql.Fields{
 						"key": &graphql.Field{
 							Type: graphql.NewNonNull(graphql.String),
@@ -71,7 +87,7 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 				},
 			)
 
-			allocFields[currentField.Name] = &graphql.Field{
+			fields[currentField.Name] = &graphql.Field{
 				Name: currentField.Name,
 				Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(itemType))),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -94,7 +110,7 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 
 		if currentField.Type.Kind() == reflect.Struct {
 			if currentField.Type.Name() == "Time" { // time.Time
-				allocFields[currentField.Name] = &graphql.Field{
+				fields[currentField.Name] = &graphql.Field{
 					Name: currentField.Name,
 					Type: graphql.NewNonNull(graphql.Int),
 					Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -104,7 +120,7 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 					},
 				}
 			} else { // user-defined struct
-				allocFields[currentField.Name] = &graphql.Field{
+				fields[currentField.Name] = &graphql.Field{
 					Name: currentField.Name,
 					Type: graphql.NewNonNull(reflectTransform(currentField.Type, registry)),
 				}
@@ -115,7 +131,7 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 
 		// pointer to struct
 		if currentField.Type.Kind() == reflect.Ptr && currentField.Type.Elem().Kind() == reflect.Struct {
-			allocFields[currentField.Name] = &graphql.Field{
+			fields[currentField.Name] = &graphql.Field{
 				Name: currentField.Name,
 				Type: reflectTransform(currentField.Type.Elem(), registry),
 			}
@@ -126,19 +142,19 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 		// slice
 		if currentField.Type.Kind() == reflect.Slice {
 			if currentField.Type.Elem().Kind() == reflect.Struct { // of struct
-				allocFields[currentField.Name] = &graphql.Field{
+				fields[currentField.Name] = &graphql.Field{
 					Name: currentField.Name,
 					Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(reflectTransform(currentField.Type.Elem(), registry)))),
 				}
 			} else if currentField.Type.Elem().Kind() == reflect.Ptr { // of pointer
-				allocFields[currentField.Name] = &graphql.Field{
+				fields[currentField.Name] = &graphql.Field{
 					Name: currentField.Name,
 					Type: graphql.NewNonNull(graphql.NewList(reflectTransform(currentField.Type.Elem().Elem(), registry))),
 				}
 			} else { // of scalar type
 				gt, ok := typeMap[currentField.Type.Elem().Kind()]
 				if ok {
-					allocFields[currentField.Name] = &graphql.Field{
+					fields[currentField.Name] = &graphql.Field{
 						Name: currentField.Name,
 						Type: graphql.NewNonNull(graphql.NewList(gt)),
 					}
@@ -152,7 +168,7 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 		if currentField.Type.Kind() == reflect.Ptr {
 			graphqlType, ok := typeMap[currentField.Type.Elem().Kind()]
 			if ok {
-				allocFields[currentField.Name] = &graphql.Field{
+				fields[currentField.Name] = &graphql.Field{
 					Name: currentField.Name,
 					Type: graphqlType,
 				}
@@ -162,7 +178,7 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 
 		graphqlType, ok := typeMap[currentField.Type.Kind()]
 		if ok {
-			allocFields[currentField.Name] = &graphql.Field{
+			fields[currentField.Name] = &graphql.Field{
 				Name: currentField.Name,
 				Type: graphql.NewNonNull(graphqlType),
 			}
@@ -174,7 +190,7 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 	graphqlType := graphql.NewObject(
 		graphql.ObjectConfig{
 			Name:   objectType.Name(),
-			Fields: allocFields,
+			Fields: fields,
 		},
 	)
 
@@ -185,11 +201,12 @@ func reflectTransform(objectType reflect.Type, registry *map[string]graphql.Outp
 
 func buildSchema(client *api.Client) (graphql.Schema, error) {
 	graphqlRegistry := map[string]graphql.Output{}
-	allocType := reflectTransform(reflect.TypeOf(api.AllocationListStub{}), &graphqlRegistry)
+	allocationListStubType := reflectTransform(reflect.TypeOf(api.AllocationListStub{}), &graphqlRegistry)
+	allocationType := reflectTransform(reflect.TypeOf(api.Allocation{}), &graphqlRegistry)
 
 	fields := graphql.Fields{
 		"allocations": &graphql.Field{
-			Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(allocType))),
+			Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(allocationListStubType))),
 			Args: graphql.FieldConfigArgument{
 				"prefix": &graphql.ArgumentConfig{
 					Type: graphql.String,
@@ -223,6 +240,18 @@ func buildSchema(client *api.Client) (graphql.Schema, error) {
 				})
 
 				return allocs, err
+			},
+		},
+		"allocation": &graphql.Field{
+			Type: allocationType,
+			Args: graphql.FieldConfigArgument{
+				"id": &graphql.ArgumentConfig{
+					Type: graphql.NewNonNull(graphql.String),
+				},
+			},
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				alloc, _, err := client.Allocations().Info(p.Args["id"].(string), nil)
+				return alloc, err
 			},
 		},
 	}
