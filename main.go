@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/graphql-go/graphql"
 	"github.com/hashicorp/nomad/api"
 )
@@ -46,6 +47,10 @@ func main() {
 			log.Println("could not write result to response:", err)
 		}
 	})
+
+	if os.Getenv("PLAYGROUND") != "disabled" {
+		http.Handle("/", playground.Handler("Nomad", "/graphql"))
+	}
 
 	addr := os.Getenv("ADDR")
 	if addr == "" {

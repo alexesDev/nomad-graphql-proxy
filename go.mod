@@ -3,6 +3,7 @@ module nomad-graphql
 go 1.15
 
 require (
+	github.com/99designs/gqlgen v0.13.0
 	github.com/cespare/reflex v0.3.0 // indirect
 	github.com/graphql-go/graphql v0.7.9
 	github.com/hashicorp/nomad v1.0.1
