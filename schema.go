@@ -204,6 +204,25 @@ func buildSchema(client *api.Client) (graphql.Schema, error) {
 	allocationListStubType := reflectTransform(reflect.TypeOf(api.AllocationListStub{}), &graphqlRegistry)
 	allocationType := reflectTransform(reflect.TypeOf(api.Allocation{}), &graphqlRegistry)
 
+	allocationListStubType.(*graphql.Object).AddFieldConfig("more", &graphql.Field{
+		Type:        allocationListStubType,
+		Description: "Reads all information about a specific allocation (/v1/allocation/:alloc_id). It can produce a large count of /v1/allocation/:alloc_id",
+		Args: graphql.FieldConfigArgument{
+			"clientStatus": &graphql.ArgumentConfig{
+				Type:        graphql.String,
+				Description: "Returns nil if clientStatus doesn't match",
+			},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			stub := p.Source.(*api.AllocationListStub)
+			if p.Args["clientStatus"] != nil && p.Args["clientStatus"].(string) != stub.ClientStatus {
+				return nil, nil
+			}
+			alloc, _, err := client.Allocations().Info(stub.ID, nil)
+			return alloc, err
+		},
+	})
+
 	fields := graphql.Fields{
 		"allocations": &graphql.Field{
 			Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(allocationListStubType))),
